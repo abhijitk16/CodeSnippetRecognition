@@ -1,0 +1,50 @@
+ private void installKeyboardInputMap() {
+    UIManager.put("RSyntaxTextAreaUI.inputMap", new SketchTextAreaDefaultInputMap());
+  }
+
+  /**
+   * Post-constructor setup for the editor area. Loads the last
+   * sketch that was used (if any), and restores other Editor settings.
+   * The complement to "storePreferences", this is called when the
+   * application is first launched.
+   *
+   * @throws Exception
+   */
+  protected boolean restoreSketches() throws Exception {
+    // Iterate through all sketches that were open last time p5 was running.
+    // If !windowPositionValid, then ignore the coordinates found for each.
+
+    // Save the sketch path and window placement for each open sketch
+    int count = PreferencesData.getInteger("last.sketch.count");
+    int opened = 0;
+    for (int i = count - 1; i >= 0; i--) {
+      String path = PreferencesData.get("last.sketch" + i + ".path");
+      if (path == null) {
+        continue;
+      }
+      if (BaseNoGui.getPortableFolder() != null && !new File(path).isAbsolute()) {
+        File absolute = new File(BaseNoGui.getPortableFolder(), path);
+        try {
+          path = absolute.getCanonicalPath();
+        } catch (IOException e) {
+          // path unchanged.
+        }
+      }
+      int[] location = retrieveSketchLocation("" + i);
+      // If file did not exist, null will be returned for the Editor
+      if (handleOpen(new File(path), location, nextEditorLocation(), false, false) != null) {
+        opened++;
+      }
+    }
+    return (opened > 0);
+  }
+
+  /**
+   * Store screen dimensions on last close
+   */
+  protected void storeScreenDimensions() {
+    // Save the width and height of the screen
+    Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
+    PreferencesData.setInteger("last.screen.width", screen.width);
+    PreferencesData.setInteger("last.screen.height", screen.height);
+  }

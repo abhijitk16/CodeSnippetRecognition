@@ -1,0 +1,479 @@
+package processing.app;
+
+import cc.arduino.Compiler;
+import cc.arduino.Constants;
+import cc.arduino.UpdatableBoardsLibsFakeURLsHandler;
+import cc.arduino.UploaderUtils;
+import cc.arduino.contributions.*;
+import cc.arduino.contributions.libraries.ContributedLibrary;
+import cc.arduino.contributions.libraries.LibrariesIndexer;
+import cc.arduino.contributions.libraries.LibraryInstaller;
+import cc.arduino.contributions.libraries.LibraryOfSameTypeComparator;
+import cc.arduino.contributions.libraries.ui.LibraryManagerUI;
+import cc.arduino.contributions.packages.ContributedPlatform;
+import cc.arduino.contributions.packages.ContributionInstaller;
+import cc.arduino.contributions.packages.ContributionsIndexer;
+import cc.arduino.contributions.packages.ui.ContributionManagerUI;
+import cc.arduino.files.DeleteFilesOnShutdown;
+import cc.arduino.packages.DiscoveryManager;
+import cc.arduino.packages.Uploader;
+import cc.arduino.view.Event;
+import cc.arduino.view.JMenuUtils;
+import cc.arduino.view.SplashScreenHelper;
+import com.github.zafarkhaja.semver.Version;
+import org.apache.commons.compress.utils.IOUtils;
+import org.apache.commons.lang3.StringUtils;
+import processing.app.debug.TargetBoard;
+import processing.app.debug.TargetPackage;
+import processing.app.debug.TargetPlatform;
+import processing.app.helpers.*;
+import processing.app.helpers.filefilters.OnlyDirs;
+import processing.app.helpers.filefilters.OnlyFilesWithExtension;
+import processing.app.javax.swing.filechooser.FileNameExtensionFilter;
+import processing.app.legacy.PApplet;
+import processing.app.macosx.ThinkDifferent;
+import processing.app.packages.LibraryList;
+import processing.app.packages.UserLibrary;
+import processing.app.packages.UserLibraryFolder.Location;
+import processing.app.syntax.PdeKeywords;
+import processing.app.syntax.SketchTextAreaDefaultInputMap;
+import processing.app.tools.MenuScroller;
+import processing.app.tools.ZipDeflater;
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+import java.util.List;
+import java.util.Timer;
+import java.util.*;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static processing.app.I18n.format;
+import static processing.app.I18n.tr;
+
+
+/**
+ * The base class for the main processing application.
+ * Primary role of this class is for platform identification and
+ * general interaction with the system (launching URLs, loading
+ * files and images, etc) that comes from that.
+ */
+public class Base {
+
+  private static final int RECENT_SKETCHES_MAX_SIZE = 10;
+
+  private static boolean commandLine;
+  public static volatile Base INSTANCE;
+
+  public static Map<String, Object> FIND_DIALOG_STATE = new HashMap<>();
+  private final ContributionInstaller contributionInstaller;
+  private final LibraryInstaller libraryInstaller;
+  private ContributionsSelfCheck contributionsSelfCheck;
+
+  // set to true after the first time the menu is built.
+  // so that the errors while building don't show up again.
+  boolean builtOnce;
+
+  // classpath for all known libraries for p5
+  // (both those in the p5/libs folder and those with lib subfolders
+  // found in the sketchbook)
+  static public String librariesClassPath;
+
+  // Location for untitled items
+  static File untitledFolder;
+
+  // p5 icon for the window
+//  static Image icon;
+
+  //  int editorCount;
+  List<Editor> editors = Collections.synchronizedList(new ArrayList<Editor>());
+  Editor activeEditor;
+
+  // these menus are shared so that the board and serial port selections
+  // are the same for all windows (since the board and serial port that are
+  // actually used are determined by the preferences, which are shared)
+  private List<JMenu> boardsCustomMenus;
+  private List<JMenuItem> programmerMenus;
+
+  private PdeKeywords pdeKeywords;
+  private final List<JMenuItem> recentSketchesMenuItems = new LinkedList<>();
+
+  static public void main(String args[]) throws Exception {
+    if (!OSUtils.isWindows()) {
+      // Those properties helps enabling anti-aliasing on Linux
+      // (but not on Windows where they made things worse actually
+      // and the font rendering becomes ugly).
+
+      // Those properties must be set before initializing any
+      // graphic object, otherwise they don't have any effect.
+      System.setProperty("awt.useSystemAAFontSettings", "on");
+      System.setProperty("swing.aatext", "true");
+    }
+    System.setProperty("java.net.useSystemProxies", "true");
+
+    if (OSUtils.isMacOS()) {
+      System.setProperty("apple.laf.useScreenMenuBar",
+        String.valueOf(!System.getProperty("os.version").startsWith("10.13")
+          || isMacOsAboutMenuItemPresent()));
+
+      ThinkDifferent.init();
+    }
+
+    try {
+      INSTANCE = new Base(args);
+    } catch (Throwable e) {
+      e.printStackTrace(System.err);
+      System.exit(255);
+    }
+  }
+
+  @SuppressWarnings("deprecation")
+  public static boolean isMacOsAboutMenuItemPresent() {
+    return com.apple.eawt.Application.getApplication().isAboutMenuItemPresent();
+  }
+
+  static public void initLogger() {
+    Handler consoleHandler = new ConsoleLogger();
+    consoleHandler.setLevel(Level.ALL);
+    consoleHandler.setFormatter(new LogFormatter("%1$tl:%1$tM:%1$tS [%4$7s] %2$s: %5$s%n"));
+
+    Logger globalLogger = Logger.getLogger(Logger.GLOBAL_LOGGER_NAME);
+    globalLogger.setLevel(consoleHandler.getLevel());
+
+    // Remove default
+    Handler[] handlers = globalLogger.getHandlers();
+    for(Handler handler : handlers) {
+        globalLogger.removeHandler(handler);
+    }
+    Logger root = Logger.getLogger("");
+    handlers = root.getHandlers();
+    for(Handler handler : handlers) {
+      root.removeHandler(handler);
+    }
+
+    globalLogger.addHandler(consoleHandler);
+
+    Logger.getLogger("cc.arduino.packages.autocomplete").setParent(globalLogger);
+    Logger.getLogger("br.com.criativasoft.cpluslibparser").setParent(globalLogger);
+    Logger.getLogger(Base.class.getPackage().getName()).setParent(globalLogger);
+
+  }
+
+  static protected boolean isCommandLine() {
+    return commandLine;
+  }
+
+  // Returns a File object for the given pathname. If the pathname
+  // is not absolute, it is interpreted relative to the current
+  // directory when starting the IDE (which is not the same as the
+  // current working directory!).
+  static public File absoluteFile(String path) {
+    return BaseNoGui.absoluteFile(path);
+  }
+
+  public Base(String[] args) throws Exception {
+    Thread deleteFilesOnShutdownThread = new Thread(DeleteFilesOnShutdown.INSTANCE);
+    deleteFilesOnShutdownThread.setName("DeleteFilesOnShutdown");
+    Runtime.getRuntime().addShutdownHook(deleteFilesOnShutdownThread);
+
+    BaseNoGui.initLogger();
+
+    initLogger();
+
+    BaseNoGui.initPlatform();
+
+    BaseNoGui.getPlatform().init();
+
+    BaseNoGui.initPortableFolder();
+
+    // Look for a possible "--preferences-file" parameter and load preferences
+    BaseNoGui.initParameters(args);
+
+    CommandlineParser parser = new CommandlineParser(args);
+    parser.parseArgumentsPhase1();
+    commandLine = !parser.isGuiMode();
+
+    // This configure the logs root folder
+    if (parser.isGuiMode()) {
+        System.out.println("Set log4j store directory " + BaseNoGui.getSettingsFolder().getAbsolutePath());
+    }
+    System.setProperty("log4j.dir", BaseNoGui.getSettingsFolder().getAbsolutePath());
+
+    BaseNoGui.checkInstallationFolder();
+
+    // If no path is set, get the default sketchbook folder for this platform
+    if (BaseNoGui.getSketchbookPath() == null) {
+      File defaultFolder = getDefaultSketchbookFolderOrPromptForIt();
+      if (BaseNoGui.getPortableFolder() != null)
+        PreferencesData.set("sketchbook.path", BaseNoGui.getPortableSketchbookFolder());
+      else
+        PreferencesData.set("sketchbook.path", defaultFolder.getAbsolutePath());
+      if (!defaultFolder.exists()) {
+        defaultFolder.mkdirs();
+      }
+    }
+
+    SplashScreenHelper splash;
+    if (parser.isGuiMode()) {
+      // Setup all notification widgets
+      splash = new SplashScreenHelper(SplashScreen.getSplashScreen());
+      BaseNoGui.notifier = new GUIUserNotifier(this);
+
+      // Setup the theme coloring fun
+      Theme.init();
+      System.setProperty("swing.aatext", PreferencesData.get("editor.antialias", "true"));
+
+      // Set the look and feel before opening the window
+      try {
+        BaseNoGui.getPlatform().setLookAndFeel();
+      } catch (Exception e) {
+        // ignore
+      }
+
+      // Use native popups so they don't look so crappy on osx
+      JPopupMenu.setDefaultLightWeightPopupEnabled(false);
+    } else {
+      splash = new SplashScreenHelper(null);
+    }
+
+    splash.splashText(tr("Loading configuration..."));
+
+    BaseNoGui.initVersion();
+
+    // Don't put anything above this line that might make GUI,
+    // because the platform has to be inited properly first.
+
+    // Create a location for untitled sketches
+    untitledFolder = FileUtils.createTempFolder("untitled" + new Random().nextInt(Integer.MAX_VALUE), ".tmp");
+    DeleteFilesOnShutdown.add(untitledFolder);
+
+    splash.splashText(tr("Initializing packages..."));
+    BaseNoGui.initPackages();
+
+    parser.getUploadPort().ifPresent(BaseNoGui::selectSerialPort);
+
+    splash.splashText(tr("Preparing boards..."));
+
+    if (!isCommandLine()) {
+      rebuildBoardsMenu();
+      rebuildProgrammerMenu();
+    } else {
+      TargetBoard lastSelectedBoard = BaseNoGui.getTargetBoard();
+      if (lastSelectedBoard != null)
+        BaseNoGui.selectBoard(lastSelectedBoard);
+    }
+
+    // Setup board-dependent variables.
+    onBoardOrPortChange();
+
+    pdeKeywords = new PdeKeywords();
+    pdeKeywords.reload();
+
+    final GPGDetachedSignatureVerifier gpgDetachedSignatureVerifier = new GPGDetachedSignatureVerifier();
+    contributionInstaller = new ContributionInstaller(BaseNoGui.getPlatform(), gpgDetachedSignatureVerifier);
+    libraryInstaller = new LibraryInstaller(BaseNoGui.getPlatform(), gpgDetachedSignatureVerifier);
+
+    parser.parseArgumentsPhase2();
+
+    // Save the preferences. For GUI mode, this happens in the quit
+    // handler, but for other modes we should also make sure to save
+    // them.
+    if (parser.isForceSavePrefs()) {
+      PreferencesData.save();
+    }
+
+    if (parser.isInstallBoard()) {
+      ContributionsIndexer indexer = new ContributionsIndexer(
+          BaseNoGui.getSettingsFolder(), BaseNoGui.getHardwareFolder(),
+          BaseNoGui.getPlatform(), gpgDetachedSignatureVerifier);
+      ProgressListener progressListener = new ConsoleProgressListener();
+
+      List<String> downloadedPackageIndexFiles = contributionInstaller.updateIndex(progressListener);
+      contributionInstaller.deleteUnknownFiles(downloadedPackageIndexFiles);
+      indexer.parseIndex();
+      indexer.syncWithFilesystem();
+
+      String[] boardToInstallParts = parser.getBoardToInstall().split(":");
+
+      ContributedPlatform selected = null;
+      if (boardToInstallParts.length == 3) {
+        Optional<Version> version = VersionHelper.valueOf(boardToInstallParts[2]);
+        if (!version.isPresent()) {
+          System.out.println(format(tr("Invalid version {0}"), boardToInstallParts[2]));
+          System.exit(1);
+        }
+        selected = indexer.getIndex().findPlatform(boardToInstallParts[0], boardToInstallParts[1], version.get().toString());
+      } else if (boardToInstallParts.length == 2) {
+        List<ContributedPlatform> platformsByName = indexer.getIndex().findPlatforms(boardToInstallParts[0], boardToInstallParts[1]);
+        Collections.sort(platformsByName, new DownloadableContributionVersionComparator());
+        if (!platformsByName.isEmpty()) {
+          selected = platformsByName.get(platformsByName.size() - 1);
+        }
+      }
+      if (selected == null) {
+        System.out.println(tr("Selected board is not available"));
+        System.exit(1);
+      }
+
+      ContributedPlatform installed = indexer.getInstalled(boardToInstallParts[0], boardToInstallParts[1]);
+
+      if (!selected.isBuiltIn()) {
+        contributionInstaller.install(selected, progressListener);
+      }
+
+      if (installed != null && !installed.isBuiltIn()) {
+        contributionInstaller.remove(installed);
+      }
+
+      System.exit(0);
+
+    } else if (parser.isInstallLibrary()) {
+      BaseNoGui.onBoardOrPortChange();
+
+      ProgressListener progressListener = new ConsoleProgressListener();
+      libraryInstaller.updateIndex(progressListener);
+
+      LibrariesIndexer indexer = new LibrariesIndexer(BaseNoGui.getSettingsFolder());
+      indexer.parseIndex();
+      indexer.setLibrariesFolders(BaseNoGui.getLibrariesFolders());
+      indexer.rescanLibraries();
+
+      for (String library : parser.getLibraryToInstall().split(",")) {
+        String[] libraryToInstallParts = library.split(":");
+
+        ContributedLibrary selected = null;
+        if (libraryToInstallParts.length == 2) {
+          Optional<Version> version = VersionHelper.valueOf(libraryToInstallParts[1]);
+          if (!version.isPresent()) {
+            System.out.println(format(tr("Invalid version {0}"), libraryToInstallParts[1]));
+            System.exit(1);
+          }
+          selected = indexer.getIndex().find(libraryToInstallParts[0], version.get().toString());
+        } else if (libraryToInstallParts.length == 1) {
+          List<ContributedLibrary> librariesByName = indexer.getIndex().find(libraryToInstallParts[0]);
+          Collections.sort(librariesByName, new DownloadableContributionVersionComparator());
+          if (!librariesByName.isEmpty()) {
+            selected = librariesByName.get(librariesByName.size() - 1);
+          }
+        }
+        if (selected == null) {
+          System.out.println(tr("Selected library is not available"));
+          System.exit(1);
+        }
+
+        Optional<ContributedLibrary> mayInstalled = indexer.getIndex().getInstalled(libraryToInstallParts[0]);
+        if (mayInstalled.isPresent() && selected.isIDEBuiltIn()) {
+          System.out.println(tr(I18n
+              .format("Library {0} is available as built-in in the IDE.\nRemoving the other version {1} installed in the sketchbook...",
+                      library, mayInstalled.get().getParsedVersion())));
+          libraryInstaller.remove(mayInstalled.get(), progressListener);
+        } else {
+          libraryInstaller.install(selected, progressListener);
+        }
+      }
+
+      System.exit(0);
+
+    } else if (parser.isVerifyOrUploadMode()) {
+      // Set verbosity for command line build
+      PreferencesData.setBoolean("build.verbose", parser.isDoVerboseBuild());
+      PreferencesData.setBoolean("upload.verbose", parser.isDoVerboseUpload());
+
+      // Set preserve-temp flag
+      PreferencesData.setBoolean("runtime.preserve.temp.files", parser.isPreserveTempFiles());
+
+      // Make sure these verbosity preferences are only for the current session
+      PreferencesData.setDoSave(false);
+
+      Sketch sketch = null;
+      String outputFile = null;
+
+      try {
+        // Build
+        splash.splashText(tr("Verifying..."));
+
+        File sketchFile = BaseNoGui.absoluteFile(parser.getFilenames().get(0));
+        sketch = new Sketch(sketchFile);
+
+        outputFile = new Compiler(sketch).build(progress -> {}, false);
+      } catch (Exception e) {
+        // Error during build
+        e.printStackTrace();
+        System.exit(1);
+      }
+
+      if (parser.isUploadMode()) {
+        // Upload
+        splash.splashText(tr("Uploading..."));
+
+        try {
+          List<String> warnings = new ArrayList<>();
+          UploaderUtils uploader = new UploaderUtils();
+          boolean res = uploader.upload(sketch, null, outputFile,
+                                        parser.isDoUseProgrammer(),
+                                        parser.isNoUploadPort(), warnings);
+          for (String warning : warnings) {
+            System.out.println(tr("Warning") + ": " + warning);
+          }
+          if (!res) {
+            throw new Exception();
+          }
+        } catch (Exception e) {
+          // Error during upload
+          System.out.flush();
+          System.err.flush();
+          System.err
+              .println(tr("An error occurred while uploading the sketch"));
+          System.exit(1);
+        }
+      }
+
+      // No errors exit gracefully
+      System.exit(0);
+    } else if (parser.isGuiMode()) {
+      splash.splashText(tr("Starting..."));
+
+      for (String path : parser.getFilenames()) {
+        // Correctly resolve relative paths
+        File file = absoluteFile(path);
+
+        // Fix a problem with systems that use a non-ASCII languages. Paths are
+        // being passed in with 8.3 syntax, which makes the sketch loader code
+        // unhappy, since the sketch folder naming doesn't match up correctly.
+        // http://dev.processing.org/bugs/show_bug.cgi?id=1089
+        if (OSUtils.isWindows()) {
+          try {
+            file = file.getCanonicalFile();
+          } catch (IOException e) {
+            e.printStackTrace();
+          }
+        }
+
+        if (!parser.isForceSavePrefs())
+          PreferencesData.setDoSave(true);
+        if (handleOpen(file, retrieveSketchLocation(".default"), false) == null) {
+          String mess = format(tr("Failed to open sketch: \"{0}\""), path);
+          // Open failure is fatal in upload/verify mode
+          if (parser.isVerifyOrUploadMode())
+            showError(null, mess, 2);
+          else
+            showWarning(null, mess, null);
+        }
+      }
+
+      installKeyboardInputMap();
+
+      // Check if there were previously opened sketches to be restored
+      restoreSketches();
+
+      // Create a new empty window (will be replaced with any files to be opened)
+      if (editors.isEmpty()) {
+        handleNew();
+      }
+
+      new Thread(new BuiltInCoreIsNewerCheck(this)).start();
