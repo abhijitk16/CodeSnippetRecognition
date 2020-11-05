@@ -1,0 +1,132 @@
+#include <iostream.h>
+
+int main(void)
+{
+int number,highNumber;
+
+cout<<"Please enter a whole number (ctrl q) to quit";
+while(cin>>number)
+{
+if(number > highNumber)
+highNumber = number;
+cout<<"Please enter a whole number (ctrl q) to quit";
+
+}
+cout<<"High number is :"<<highNumber<<endl;
+return 0;
+}
+
+
+#include <iostream.h>
+#include <stdlib.h>
+#include <iomanip.h>
+
+int main()
+{
+
+cout<<setw(20)<<"setw(20)"<<endl;
+cout<<setw(10)<<"setw(10)"<<endl;
+cout<<setw(15)<<"setw(15)"<<endl;
+
+return 0;
+}
+
+#include <iostream.h>
+
+int main(void)
+{
+const SIZE = 100;
+char msg[SIZE];
+cout<<"Enter a string."<<endl;
+cin.getline(msg,SIZE);
+cout<<"The sentence you entered was"<<endl;
+cout<<msg<<endl;
+
+return 0;
+}
+
+#include <iostream.h> 
+#include <conio.h> 
+int a = 1000; 
+class Test 
+{ 
+   int a; 
+   public: 
+  Test() 
+  { 
+     a = 0; 
+  } 
+  void get_a() 
+ { 
+    int a; 
+    cout << “Enter Value of A :”; 
+    cin >> a; 
+  } 
+  
+  
+  class d 
+{ 
+    int day, mon; 
+    public: 
+    d() {  cout << “\nconst”;  } 
+  ~d() { cout << “\ndest”; } 
+}; 
+void main() 
+{ 
+   d *d1 = new d; 
+   cout << “Process”; 
+} 
+
+
+
+int test::cnt; 
+void main() 
+{ 
+    test ob,ob1(10); 
+    ob = test(); 
+    test(); 
+}
+
+
+class subtest:public test 
+{ 
+     int b; 
+     public: 
+     subtest() {    b = 20; } 
+     subtest(int p,int q):test(p) {     b = q;    } 
+     void display() { cout << endl << a << “ ” << b; } 
+}; 
+
+void main() 
+{ 
+     test *t; 
+     t = new test(100); 
+     t->display()’ 
+     t = new subtest(20,40); 
+     t->display(); 
+     getch(); 
+} 
+
+typedef void ( F::*p )(int); p ptr[3];
+typedef (F::void(*p))(int); p ptr[3];
+
+class Test 
+{ 
+    int a; 
+    public: 
+    T fun1(int x) 
+    { 
+        T tmp; 
+        tmp.a = 2 * x; 
+        Return tmp; 
+    } 
+    void fun2() 
+    { 
+        cout << endl << this->a; 
+    } 
+}; 
+void main() 
+{ 
+    T t1; 
+    t1.fun1(100).fun2(); 
+}

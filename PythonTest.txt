@@ -1,1 +1,9 @@
-os.kill(os.getpid(), signal.SIGUSR1)
+import sys
+sys.stdout.write("Breaking Bad")
+
+for address in addresses:
+    try:
+        address.index(street)
+        print(address)
+    except ValueError:
+        pass

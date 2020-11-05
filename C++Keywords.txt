@@ -56,3 +56,5 @@ void
 volatile
 wchar_t
 while
+cin
+cout

@@ -3,12 +3,12 @@
 # featureset = list(set(pythonkeywords+javakeywords))
 featureset = ['import', 'protected', 'private', 'strictfp', 'static', 'abstract', 'else', 'def', 'not', ':', 'from', 'in', 'elif', 'interface', 'throw', 'del', 'for', 'public', 'super', 'try', 'async', '#', 'false', 'new', 
 'with', 'case', 'None', 'False', 'enum', 'throws', 'while', 'volatile', 'break', 'global', 'extends', 'finally', 'transient', 'except', 'return', 'and', 'or', 'goto', 'continue', 'instanceof', 'catch', 'final', 'pass', 'boolean', 'short', 'double', "'''", 'byte', '{', 'implements', 'class', 'as', 'nonlocal', 'char', 'switch', 'int', 'package', 'True', 'raise', 'synchronized', 'float', 'long', 'native', 'this', 'do', 
-'await', 'is', 'lambda', 'true', 'null', 'assert', 'const', '}', 'yield', 'default', 'void', 'if','package','java','lang','os','System','join','split','len','lengths','sort']
+'await', 'is', 'lambda', 'true', 'null', 'assert', 'const', '}', 'yield', 'default', 'void', 'if','package','java','lang','os','System','join','split','len','lengths','sort','items','keys','cin','cout','<iostream.h>','::']
 # print(featureset)
 python = [0]*len(featureset)
 java = [0]*len(featureset)
 
-with open("PythonTest.txt","r") as words:
+with open("C++test.txt","r",encoding='utf-8') as words:
     alllines = words.readlines()
     for i in alllines:
         j = i.split()

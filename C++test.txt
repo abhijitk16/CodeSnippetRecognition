@@ -1,0 +1,32 @@
+
+#include "shape.h"
+
+void FRectangle::setLength(double lgt)
+{
+	Length = lgt;
+}
+
+void FRectangle::setWidth(double wdt)
+{
+	Width = wdt;
+}
+
+double FRectangle::getLength() const
+{
+	return Length;
+}
+
+double FRectangle::getWidth() const
+{
+	return Width;
+}
+
+double FRectangle::Perimeter() const
+{
+	return 2 * (Length + Width);
+}
+
+double FRectangle::Area() const
+{
+	return Length * Width;
+}
